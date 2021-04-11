@@ -260,7 +260,11 @@ class fc_net(nn.Module):
 def evaluate_accuracy(data_iter, net):
     acc_sum, n = 0.0, 0
     for X, y in data_iter:
-        acc_sum += (net[2](net[1](net[0](X))).argmax(dim=1) == y).float().sum().item()
+        feature = net[0](X)
+        attention = net[1](feature)
+        classify = net[2](attention)
+        result = attention * classify
+        acc_sum += (result.argmax(dim=1) == y).float().sum().item()
         n += y.shape[0]
     return acc_sum / n
 

@@ -1,4 +1,4 @@
-from PIL.Image import Image
+from PIL import Image, ImageFont, ImageDraw
 import numpy as np
 import torchvision.models as models
 import torch.utils.data as data
@@ -11,6 +11,7 @@ import torch.nn as nn
 import random
 import deal_with_photo
 import torch.nn.functional as F
+
 
 
 class basic_parameters:
@@ -26,6 +27,11 @@ class basic_parameters:
         self.epochs = 70
         self.drop_rate = 0.3
         self.pretrained = False
+        self.facial_label = ['Surprise', 'Fear', 'Disgust', 'Happiness', 'Sadness', 'Anger', 'Neutral']
+        if self.pretrained:
+            self.pretrained_path = './model.pkl'
+        else:
+            self.pretrained_path = None
 
 
 class raf_datasets(data.Dataset):
@@ -268,35 +274,7 @@ def evaluate_accuracy(data_iter, net):
         n += y.shape[0]
     return acc_sum / n
 
-
-def run_training():
-    args = basic_parameters()
-    imagenet_pretrained = True
-    res18 = basic_net(imagenet_pretrained, args.drop_rate)
-    attention = attention_net()
-    fc = fc_net()
-
-    if args.pretrained:
-        print("Loading pretrained weights...", args.pretrained)
-        pretrained = torch.load(args.pretrained)
-        pretrained_state_dict = pretrained['state_dict']
-        model_state_dict = res18.state_dict()
-        loaded_keys = 0
-        total_keys = 0
-        for key in pretrained_state_dict:
-            if ((key == 'module.fc.weight') | (key == 'module.fc.bias')):
-                pass
-            else:
-                model_state_dict[key] = pretrained_state_dict[key]
-                total_keys += 1
-                if key in model_state_dict:
-                    loaded_keys += 1
-        print("Loaded params num:", loaded_keys)
-        print("Total params num:", total_keys)
-        res18.load_state_dict(model_state_dict, strict=False)
-        attention.load_state_dict(model_state_dict, strict=False)
-        fc.load_state_dict(model_state_dict, strict=False)
-
+def get_transform(tag=0):
     data_transforms = transforms.Compose([
         transforms.ToPILImage(),
         transforms.Resize((224, 224)),
@@ -304,6 +282,44 @@ def run_training():
         transforms.Normalize(mean=[0.485, 0.456, 0.406],
                              std=[0.229, 0.224, 0.225]),
         transforms.RandomErasing(scale=(0.02, 0.25))])
+    data_transforms_val = transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                             std=[0.229, 0.224, 0.225])])
+    if tag == 0:
+        return data_transforms
+    else:
+        return data_transforms_val
+    
+
+def run_training():
+    imagenet_pretrained = True
+    res18 = basic_net(imagenet_pretrained, args.drop_rate)
+    attention = attention_net()
+    fc = fc_net()
+
+    if args.pretrained:
+        print("Loading pretrained weights...", args.pretrained)
+        pretrained = torch.load(args.pretrained_path)
+        res18_state_dict = pretrained['res18']
+        atten_state_dict = pretrained['atten']
+        fc_state_dict = pretrained['fc']
+
+        res18.load_state_dict(res18_state_dict, strict=False)
+        print('res18_net load success...')
+        attention.load_state_dict(atten_state_dict, strict=False)
+        print('attention_net load success...')
+        fc.load_state_dict(fc_state_dict, strict=False)
+        print('fc_net load success...')
+
+        res18.eval()
+        attention.eval()
+        fc.eval()
+        return res18, attention, fc
+
+    data_transforms = get_transform()
 
     train_dataset = raf_datasets(args.raf_path, phase='train', transform=data_transforms, basic_aug=True)
 
@@ -313,12 +329,7 @@ def run_training():
                                                shuffle=True,
                                                pin_memory=True)
 
-    data_transforms_val = transforms.Compose([
-        transforms.ToPILImage(),
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                             std=[0.229, 0.224, 0.225])])
+    data_transforms_val = get_transform(1)
     val_dataset = raf_datasets(args.raf_path, phase='test', transform=data_transforms_val)
     print('Validation set size:', val_dataset.__len__())
 
@@ -349,7 +360,6 @@ def run_training():
         fc.train()
 
         for batch_i, (imgs, targets, indexes) in enumerate(train_loader):
-            print('...')
             batch_sz = imgs.size(0)
             iter_cnt += 1
             tops = int(batch_sz * beta)
@@ -400,7 +410,79 @@ def run_training():
         running_loss = running_loss/iter_cnt
         val_acc = evaluate_accuracy(val_loader, [res18, attention, fc])
         print('[Epoch %d] Training accuracy: %.4f. Loss: %.3f  Val accuracy' % (i, acc, running_loss, val_acc))
+        save_model(res18, attention, fc, args.pretrained_path)
+    return res18, attention, fc
 
+def save_model(res18, attention, fc, path):
+    save_dict = {
+        'res18': res18.state_dict(),
+        'attention': attention.state_dict(),
+        'fc': fc.state_dict()
+    }
+    torch.save(
+        save_dict,
+        path
+    )
+
+
+def catch_face(frame, net=None):
+    classfier = cv2.CascadeClassifier('d:/Anacoda/Lib/site-packages/cv2/data/haarcascade_frontalface_alt2.xml')
+    color = (0, 255, 0)
+    grey = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+    face_rects = classfier.detectMultiScale(grey, scaleFactor=1.2, minNeighbors=3, minSize=(32, 32))
+    if len(face_rects) > 0:
+        for face_rect in face_rects:
+            x, y, w, h = face_rect
+            image = frame[y - 10: y + h + 10, x - 10: x + w + 10]
+            pil_img = cv2pil(image)
+            label = predict_model(pil_img, net)
+            cv2.rectangle(frame, (x - 10, y - 10), (x + w + 10, y + h + 10), color, 2)
+            frame = paint_chinese(frame, args.facial_label[label], (x - 10, y + h + 10), color)
+    return frame
+
+
+def cv2pil(image):
+    return Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+
+
+def predict_model(image, net=None):
+    data_transform = get_transform(1)
+    image = data_transform(image)
+    image = image.view(-1, 3, 224, 224)
+    out = net[0](image)
+    atten_out = net[1](out)
+    fc_out = net[2](atten_out)
+    out = fc_out * atten_out
+    pred = out.max(1, keepdim=True)[1]
+    return pred.item()
+
+
+def paint_chinese(im, chinese, pos, color):
+    img_pil = Image.fromarray(cv2.cvtColor(im, cv2.COLOR_BGR2RGB))
+    font = ImageFont.truetype('c:/Windows/Fonts/STZHONGS.TTF', 20)
+    fill_color = color
+    position = pos
+    draw = ImageDraw.Draw(img_pil)
+    draw.text(position, chinese, font=font, fill=fill_color)
+    img = cv2.cvtColor(np.asarray(img_pil), cv2.COLOR_RGB2BGR)
+    return img
+
+
+def recognize_video(window_name='face recognize', camera_idx=0, net=None):
+    cv2.namedWindow(window_name)
+    cap = cv2.VideoCapture(camera_idx)
+    while cap.isOpened():
+        ok, frame = cap.read()
+        if not ok:
+            break
+        catch_frame = catch_face(frame, net)
+        cv2.imshow(window_name, catch_frame)
+        if cv2.waitKey(100) & 0xff == ord('q'):
+            break
+    cap.release()
+    cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    run_training()
+    args = basic_parameters()
+    res18, attention, fc = run_training()
+    recognize_video(net=[res18, attention, fc])

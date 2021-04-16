@@ -437,7 +437,7 @@ def catch_face(frame, net=None):
             pil_img = cv2pil(image)
             label = predict_model(pil_img, net)
             cv2.rectangle(frame, (x - 10, y - 10), (x + w + 10, y + h + 10), color, 2)
-            frame = paint_chinese(frame, args.facial_label[label], (x - 10, y + h + 10), color)
+            frame = paint(frame, args.facial_label[label], (x - 10, y + h + 10), color)
     return frame
 
 
@@ -457,7 +457,7 @@ def predict_model(image, net=None):
     return pred.item()
 
 
-def paint_chinese(im, chinese, pos, color):
+def paint(im, chinese, pos, color):
     img_pil = Image.fromarray(cv2.cvtColor(im, cv2.COLOR_BGR2RGB))
     font = ImageFont.truetype('c:/Windows/Fonts/STZHONGS.TTF', 20)
     fill_color = color

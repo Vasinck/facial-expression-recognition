@@ -434,10 +434,10 @@ def catch_face(frame, net=None):
     if len(face_rects) > 0:
         for face_rect in face_rects:
             x, y, w, h = face_rect
-            if x < 11:
-                x = 11
-            if y < 11:
-                y = 11
+            if x < 10:
+                x = 10
+            if y < 10:
+                y = 10
             image = frame[y - 10: y + h + 10, x - 10: x + w + 10]
             pil_img = cv2pil(image)
             label = predict_model(pil_img, net)

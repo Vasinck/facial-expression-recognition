@@ -12,9 +12,6 @@ import random
 import deal_with_photo
 import torch.nn.functional as F
 
-'''
-test
-'''
 
 class Basic_Parameters:
     def __init__(self):
